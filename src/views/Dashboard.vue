@@ -795,7 +795,7 @@ const initChartData = async () => {
       }
     }
     
-    // 转换为数组并排序，获取TOP 10
+    // 转换为数组并排序，获取TOP 10，用于站点排名图表
     const allStationsTotal = Array.from(totalInflowByStationForTopStations.entries()).map(([stationID, flow]) => {
       const station = stations.value.find(st => st.stationID === stationID || st.id === stationID)
       const name = station ? (station.name || station.stationName || station.stationID) : `站点${stationID}`
@@ -804,18 +804,16 @@ const initChartData = async () => {
         flow: flow,
         stationID: stationID
       }
-    }).sort((a, b) => b.flow - a.flow).slice(0, 10)
+    }).sort((a, b) => b.flow - a.flow)
     
-    // 重新定义topStations变量，用于后续图表使用
-    const topStations = allStationsTotal
-    
+    // 更新站点排名图表数据（取TOP 10）
     if (allStationsTotal.length) {
-      barChartOption.value.yAxis.data = allStationsTotal.map(s => s.name).reverse()
-      barChartOption.value.series[0].data = allStationsTotal.map(s => s.flow).reverse()
+      barChartOption.value.yAxis.data = allStationsTotal.slice(0, 10).map(s => s.name).reverse()
+      barChartOption.value.series[0].data = allStationsTotal.slice(0, 10).map(s => s.flow).reverse()
     }
 
     // 线路流量分布 - 以站点聚合近似展示（取 Top 6 站点占比）
-    const topLines = topStations.slice(0, 6).map(s => ({ value: s.flow, name: s.name }))
+    const topLines = allStationsTotal.slice(0, 6).map(s => ({ value: s.flow, name: s.name }))
     pieChartOption.value.series[0].data = topLines
 
     // 时段流量（工作日/周末）及分类统计（基于所有已拉取的 slots）
@@ -941,31 +939,19 @@ const initChartData = async () => {
       }
     }
 
-    // Metro lines 表格 - 用 Top station 列表代替线路（降级显示）
-    // 计算所有时间段的站点总流量
-    for (const result of inflowResults) {
-      for (const item of result.data) {
-        const stationID = item.stationID
-        const flow = (item.Tot_IF || item.tot_if || 0)
-        if (totalInflowByStationForTopStations.has(stationID)) {
-          totalInflowByStationForTopStations.set(stationID, totalInflowByStationForTopStations.get(stationID) + flow)
-        } else {
-          totalInflowByStationForTopStations.set(stationID, flow)
-        }
-      }
-    }
-    
-    const newMetroLines = stations.value.map((station, idx) => {
+    // Metro lines 表格 - 使用与站点排名相同的计算逻辑，确保数据一致性
+    const newMetroLines = stations.value.map(station => {
       const stationFlow = totalInflowByStationForTopStations.get(station.id || station.stationID) || 0
+      const stationName = station.name || `站点 ${station.id || station.stationID}`
       return {
         id: station.id || station.stationID,
-        name: station.name || `站点 ${station.id || station.stationID}`,
+        name: stationName,
         longitude: station.lon,  // 添加经度数据
         latitude: station.lat,   // 添加纬度数据
         stations: 1,
         flow: stationFlow,  // 使用计算的流量而不是原始数据
         status: stationFlow && stationFlow > 0 ? '正常' : '待检测',
-        tagType: idx % 4 === 0 ? 'primary' : idx % 4 === 1 ? 'success' : idx % 4 === 2 ? 'warning' : 'info'
+        tagType: stationFlow > 0 ? 'primary' : 'info'
       }
     })
     
