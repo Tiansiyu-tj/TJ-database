@@ -43,9 +43,17 @@ export async function fetchNeighbours(stationId) {
 // ============ DateInfo & TimeSegment ============
 /** 获取某日期的 DateInfo */
 export async function fetchDateInfo(recordDate) {
-  const res = await fetch(`${API_BASE_URL}/time/dateInfo?recordDate=${encodeURIComponent(recordDate)}`)
+  const params = new URLSearchParams()
+  if (recordDate) params.append('recordDate', recordDate)
+  const res = await fetch(`${API_BASE_URL}/time/dateinfo?${params}`)
   const json = await res.json()
-  return json.data || null
+  // Backend may return either a wrapped {code,message,data} or a raw list; normalize.
+  const raw = (json && json.data !== undefined) ? json.data : json
+  if (recordDate) {
+    if (Array.isArray(raw)) return raw.length ? raw[0] : null
+    return raw || null
+  }
+  return raw || []
 }
 
 /** 获取某日期的所有 TimeSegment（后端支持按 recordDate 过滤或前端在返回列中过滤） */
@@ -175,7 +183,10 @@ export async function fetchInflowAggregate(slot) {
 export async function fetchTopOD(slot, n = 10) {
   const params = new URLSearchParams({ limit: n })
   // slot 参数若后端支持可加入 params，但目前后端按 limit 返回 top od
-  const res = await fetch(`${API_BASE_URL}/metro/top-od?${params}`)
+  const res = await fetch(`${API_BASE_URL}/metro/top-od?${params}`, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' }
+  })
   const json = await res.json()
   return json.data || []
 } 

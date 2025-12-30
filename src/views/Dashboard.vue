@@ -77,7 +77,7 @@
 
         <el-row :gutter="20" class="charts-row">
           <!-- 线路流量分布 -->
-          <el-col :xs="24" :lg="12">
+          <el-col :xs="24" :lg="12" class="equal-height-col">
             <el-card class="chart-card" shadow="hover">
               <template #header>
                 <div class="card-header">
@@ -88,53 +88,26 @@
             </el-card>
           </el-col>
 
-          <!-- 时段流量分析 (5点-23点) -->
-          <el-col :xs="24" :lg="12">
-            <el-card class="chart-card" shadow="hover">
-              <template #header>
-                <div class="card-header">
-                  <span>时段流量分析 (5:00-23:00)</span>
-                </div>
-              </template>
-              <ECharts :option="areaChartOption" height="350px" />
-            </el-card>
-          </el-col>
-        </el-row>
-
-        <el-row :gutter="20" class="charts-row">
           <!-- 天气信息展示 -->
-          <el-col :xs="24" :lg="12">
+          <el-col :xs="24" :lg="12" class="equal-height-col">
             <el-card class="chart-card" shadow="hover">
               <template #header>
                 <div class="card-header">
                   <span>今日天气信息</span>
-                  <el-tag type="info" size="small">实时数据</el-tag>
+                  <el-tag type="success" size="small">实时数据</el-tag>
                 </div>
               </template>
 
-            <div v-if="!hasWeather" class="weather-empty">暂无天气数据</div>
+            <div v-if="!todayWeather" class="weather-empty">暂无天气数据</div>
             <div class="echarts-wrapper" v-else>
               <ECharts :option="weatherChartOption" height="300px" />
-            </div>  
-          </el-card>
-        </el-col>
-
-        <el-col :xs="24" :lg="12">
-          <el-card class="chart-card" shadow="hover">
-            <template #header>
-              <div class="card-header">
-                <span>流量分类分析</span>
-              </div>
-            </template>
-            <div class="echarts-wrapper">
-              <ECharts :option="categoryChartOption" height="300px" />
-            </div> 
-          </el-card>
+            </div>
+            </el-card>
         </el-col>
         </el-row>
 
+        <!-- OD流量分析（起终点站） -->
         <el-row :gutter="20" class="charts-row">
-          <!-- OD流量分析（起终点站） -->
           <el-col :xs="24" :lg="24">
             <el-card class="chart-card" shadow="hover">
               <template #header>
@@ -177,28 +150,26 @@
         <el-card class="table-card" shadow="hover">
           <template #header>
             <div class="card-header">
-              <span>地铁线路详情</span>
-              <el-button type="primary" size="small" :icon="Refresh" @click="refreshData">
-                刷新数据
-              </el-button>
+              <span>地铁站点详情</span>
             </div>
           </template>
           <el-table
-            :data="metroLines"
+            :data="paginatedStations"
             stripe
             style="width: 100%"
             :default-sort="{ prop: 'flow', order: 'descending' }"
           >
-            <el-table-column prop="line" label="线路" width="120">
+            <el-table-column prop="id" label="站点ID" width="120">
               <template #default="{ row }">
-                <el-tag :type="row.tagType" size="large">{{ row.line }}</el-tag>
+                <el-tag :type="row.tagType" size="large">{{ row.id }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="name" label="线路名称" />
-            <el-table-column prop="stations" label="站点数" width="100" align="center" />
-            <el-table-column prop="flow" label="今日流量(万人次)" width="160" sortable align="right">
+            <el-table-column prop="name" label="站点名称" />
+            <el-table-column prop="longitude" label="经度(°)" width="120" align="center" />
+            <el-table-column prop="latitude" label="纬度(°)" width="120" align="center" />
+            <el-table-column prop="flow" label="今日流量(人次)" width="160" sortable align="right">
               <template #default="{ row }">
-                <el-text type="primary" size="large">{{ row.flow.toFixed(1) }}</el-text>
+                <el-text type="primary" size="large">{{ row.flow }}</el-text>
               </template>
             </el-table-column>
             <el-table-column prop="status" label="运行状态" width="120" align="center">
@@ -216,6 +187,15 @@
               </template>
             </el-table-column>
           </el-table>
+          <el-pagination
+            background
+            layout="prev, pager, next"
+            :total="allStationsData.length"
+            :page-size="pageSize"
+            :current-page="currentPage"
+            @current-change="handlePageChange"
+            style="margin-top: 16px; text-align: center;"
+          />
         </el-card>
       </el-main>
     </el-container>
@@ -223,7 +203,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import ECharts from '@/components/ECharts.vue'
@@ -255,10 +235,9 @@ import {
 
 const router = useRouter()
 const username = ref(localStorage.getItem('username') || '管理员')
-let updateTimer = null
 
 // 指定测试日期（用于调试/验证，格式 YYYY-MM-DD）。设置为 null 表示使用当日或数据库中最新可用日期。
-const TEST_METRO_DATE = '2017-05-10'
+const TEST_METRO_DATE = '2017-06-10'
 // 开发时自动登录（仅用于本地调试）。上线前请移除或置为 false
 const DEV_AUTO_LOGIN = true
 
@@ -327,7 +306,21 @@ const statsData = ref([
 ])
 
 // 地铁线路数据（由站点/流量计算而来）
-const metroLines = ref([])
+const allStationsData = ref([])  // 存储所有站点数据
+const currentPage = ref(1)
+const pageSize = ref(10)  // 每页显示10条数据
+
+// 添加计算属性来获取当前页的数据
+const paginatedStations = computed(() => {
+  // 先对所有站点数据按流量降序排序
+  const sortedStations = [...allStationsData.value].sort((a, b) => b.flow - a.flow)
+  // 然后进行分页
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
+  return sortedStations.slice(start, end)
+})
+
+const metroLines = computed(() => paginatedStations.value)
 
 // 实时流量趋势图
 const lineChartOption = ref({
@@ -382,7 +375,7 @@ const barChartOption = ref({
   },
   grid: {
     left: '3%',
-    right: '4%',
+    right: '8%',  // 增加右边距，为Y轴标签提供更多空间
     bottom: '3%',
     containLabel: true
   },
@@ -393,7 +386,11 @@ const barChartOption = ref({
   },
   yAxis: {
     type: 'category',
-    data: []
+    data: [],
+    axisLabel: {
+      interval: 0,
+      fontSize: 12  // 可选：调整字体大小以适应更多文字
+    }
   },
   series: [
     {
@@ -444,52 +441,8 @@ const pieChartOption = ref({
   ]
 })
 
-// 时段流量分析
-const areaChartOption = ref({
-  tooltip: {
-    trigger: 'axis'
-  },
-  legend: {
-    data: ['工作日', '周末']
-  },
-  grid: {
-    left: '3%',
-    right: '4%',
-    bottom: '3%',
-    containLabel: true
-  },
-  xAxis: {
-    type: 'category',
-    boundaryGap: false,
-    data: ['5:00', '6:00', '7:00', '8:00', '9:00', '10:00', '11:00', '12:00', 
-           '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00', '22:00', '23:00']
-  },
-  yAxis: {
-    type: 'value',
-    name: '人次',
-    axisLabel: { formatter: (value) => Number(value).toLocaleString() }
-  },
-  series: [
-    {
-      name: '工作日',
-      type: 'line',
-      stack: 'Total',
-      smooth: true,
-      areaStyle: {},
-      data: [],
-      itemStyle: { color: '#409EFF' }
-    },
-    {
-      name: '周末',
-      type: 'line',
-      stack: 'Total',
-      smooth: true,
-      areaStyle: {},
-      data: [],
-      itemStyle: { color: '#67C23A' }
-    }
-  ]
-})
+// 时段流量分析 已移除（按需求）
+
 
 // 天气信息图表
 const weatherChartOption = ref({
@@ -502,7 +455,7 @@ const weatherChartOption = ref({
   },
   grid: {
     left: '3%',
-    right: '4%',
+    right: '8%',  // 增加右边距，为Y轴标签提供更多空间
     bottom: '3%',
     containLabel: true
   },
@@ -557,59 +510,9 @@ const weatherChartOption = ref({
 
 // 当日天气概要（温度/降雨/风速）
 const todayWeather = ref(null)
-const hasWeather = ref(false)
 
-// 流量分类分析图表（通勤C/居家HB/非居家NHB）
-const categoryChartOption = ref({
-  tooltip: {
-    trigger: 'axis'
-  },
-  legend: {
-    data: ['通勤流量(C)', '居家流量(HB)', '非居家流量(NHB)']
-  },
-  grid: {
-    left: '3%',
-    right: '4%',
-    bottom: '3%',
-    containLabel: true
-  },
-  xAxis: {
-    type: 'category',
-    boundaryGap: false,
-    data: []
-  },
-  yAxis: {
-    type: 'value',
-    name: '人次',
-    axisLabel: { formatter: (value) => Number(value).toLocaleString() }
-  },
-  series: [
-    {
-      name: '通勤流量(C)',
-      type: 'line',
-      stack: 'Total',
-      areaStyle: {},
-      data: [],
-      itemStyle: { color: '#409EFF' }
-    },
-    {
-      name: '居家流量(HB)',
-      type: 'line',
-      stack: 'Total',
-      areaStyle: {},
-      data: [],
-      itemStyle: { color: '#67C23A' }
-    },
-    {
-      name: '非居家流量(NHB)',
-      type: 'line',
-      stack: 'Total',
-      areaStyle: {},
-      data: [],
-      itemStyle: { color: '#E6A23C' }
-    }
-  ]
-})
+// 流量分类分析 已移除（按需求）
+
 
 // OD流量分析图表（起终点站）
 const odChartOption = ref({
@@ -651,13 +554,13 @@ const odChartOption = ref({
   ]
 })
 
-// 进站流量分类统计
+// 进站流量分类统计（仅三类：通勤/居家/非居家）
 const inflowCategoryOption = ref({
   tooltip: {
     trigger: 'axis'
   },
   legend: {
-    data: ['总进站流量(Tot_IF)', '通勤进站(C_IF)', '居家进站(HB_IF)', '非居家进站(NHB_IF)']
+    data: ['通勤进站(C_IF)', '居家进站(HB_IF)', '非居家进站(NHB_IF)']
   },
   grid: {
     left: '3%',
@@ -676,39 +579,42 @@ const inflowCategoryOption = ref({
   },
   series: [
     {
-      name: '总进站流量(Tot_IF)',
-      type: 'bar',
+      name: '通勤进站(C_IF)',
+      type: 'line',
+      stack: 'Total',
+      areaStyle: {},
+      smooth: true,
       data: [],
       itemStyle: { color: '#409EFF' }
     },
     {
-      name: '通勤进站(C_IF)',
-      type: 'bar',
+      name: '居家进站(HB_IF)',
+      type: 'line',
+      stack: 'Total',
+      areaStyle: {},
+      smooth: true,
       data: [],
       itemStyle: { color: '#67C23A' }
     },
     {
-      name: '居家进站(HB_IF)',
-      type: 'bar',
+      name: '非居家进站(NHB_IF)',
+      type: 'line',
+      stack: 'Total',
+      areaStyle: {},
+      smooth: true,
       data: [],
       itemStyle: { color: '#E6A23C' }
-    },
-    {
-      name: '非居家进站(NHB_IF)',
-      type: 'bar',
-      data: [],
-      itemStyle: { color: '#F56C6C' }
     }
   ]
 })
 
-// 出站流量分类统计
+// 出站流量分类统计（仅三类：通勤/居家/非居家）
 const outflowCategoryOption = ref({
   tooltip: {
     trigger: 'axis'
   },
   legend: {
-    data: ['总出站流量(Tot_OF)', '通勤出站(C_OF)', '居家出站(HB_OF)', '非居家出站(NHB_OF)']
+    data: ['通勤出站(C_OF)', '居家出站(HB_OF)', '非居家出站(NHB_OF)']
   },
   grid: {
     left: '3%',
@@ -727,28 +633,31 @@ const outflowCategoryOption = ref({
   },
   series: [
     {
-      name: '总出站流量(Tot_OF)',
-      type: 'bar',
+      name: '通勤出站(C_OF)',
+      type: 'line',
+      stack: 'Total',
+      areaStyle: {},
+      smooth: true,
       data: [],
       itemStyle: { color: '#409EFF' }
     },
     {
-      name: '通勤出站(C_OF)',
-      type: 'bar',
+      name: '居家出站(HB_OF)',
+      type: 'line',
+      stack: 'Total',
+      areaStyle: {},
+      smooth: true,
       data: [],
       itemStyle: { color: '#67C23A' }
     },
     {
-      name: '居家出站(HB_OF)',
-      type: 'bar',
+      name: '非居家出站(NHB_OF)',
+      type: 'line',
+      stack: 'Total',
+      areaStyle: {},
+      smooth: true,
       data: [],
       itemStyle: { color: '#E6A23C' }
-    },
-    {
-      name: '非居家出站(NHB_OF)',
-      type: 'bar',
-      data: [],
-      itemStyle: { color: '#F56C6C' }
     }
   ]
 })
@@ -770,30 +679,47 @@ const initChartData = async () => {
     let slots = (segments || []).filter(s => {
       const hour = slotHour(s)
       if (hour == null) return false
-      return hour >= 5 && hour <= 23
+      return hour >= 6 && hour <= 23  // 修改：从6点开始到23点结束
     }).sort((a, b) => (slotHour(a) || 0) - (slotHour(b) || 0))
 
-    // 如果没有 segments（例如当天或 TEST_METRO_DATE 无数据），并且没有强制 TEST_METRO_DATE，则尝试使用数据库中最近的可用日期
-    if (!slots.length && !TEST_METRO_DATE) {
-      try {
-        const allSegments = await fetchTimeSegmentsByDate(null, 1000).catch(() => [])
-        if (allSegments && allSegments.length) {
-          const dates = Array.from(new Set(allSegments.map(s => s.recordDate).filter(Boolean))).sort()
-          const latestDate = dates.length ? dates[dates.length - 1] : null
-          if (latestDate) {
-            usedDate = latestDate
-            segments = allSegments.filter(s => s.recordDate === latestDate)
-            slots = segments.filter(s => {
-              const hour = slotHour(s)
-              if (hour == null) return false
-              return hour >= 5 && hour <= 23
-            }).sort((a, b) => (slotHour(a) || 0) - (slotHour(b) || 0))
-            console.info('initChartData: no slots for today, using latest available date', usedDate)
-          }
-        }
-      } catch (e) {
-        // ignore and fallback
-      }
+    // 如果没有 segments（例如当天或 TEST_METRO_DATE 无数据），不再自动回退到其他日期（已移除 fallback 模式）
+    if (!slots.length) {
+      console.warn('initChartData: no slots for', usedDate)
+      ElMessage.warning('当天无可用时段数据；请检查所选日期或稍后重试')
+      // 清空主要图表数据并返回
+      lineChartOption.value.xAxis.data = []
+      lineChartOption.value.series[0].data = []
+      lineChartOption.value.series[1].data = []
+
+      barChartOption.value.yAxis.data = []
+      barChartOption.value.series[0].data = []
+
+      pieChartOption.value.series[0].data = []
+
+
+
+      weatherChartOption.value.xAxis.data = []
+      weatherChartOption.value.series[0].data = []
+      weatherChartOption.value.series[1].data = []
+      weatherChartOption.value.series[2].data = []
+
+      odChartOption.value.series[0].data = []
+
+      inflowCategoryOption.value.series[0].data = []
+      inflowCategoryOption.value.series[1].data = []
+      inflowCategoryOption.value.series[2].data = []
+
+      outflowCategoryOption.value.series[0].data = []
+      outflowCategoryOption.value.series[1].data = []
+      outflowCategoryOption.value.series[2].data = []
+
+      statsData.value.forEach(stat => {
+        stat.value = '—'
+      })
+
+      metroLines.value = []
+      todayWeather.value = null
+      return
     }
 
     // 仍然没有时段则回退到随机生成（保持原体验）
@@ -812,8 +738,10 @@ const initChartData = async () => {
       return sh != null && eh != null && ch >= sh && ch < eh
     })
 
-    // 以当前 slot 为锚，使用到当前时间之前的 slots
-    const useSlots = currentSlotIdx >= 0 ? slots.slice(0, currentSlotIdx + 1) : slots
+    // 修改：不再以当前时间为限制，而是使用全部6:00-23:00的slots
+    // 原代码：
+    // const useSlots = currentSlotIdx >= 0 ? slots.slice(0, currentSlotIdx + 1) : slots
+    const useSlots = slots // 使用所有符合条件的slots（6:00-23:00）
 
     const inflowPromises = useSlots.map(s => fetchInflowBySlot(s.Slot).then(data => ({ slot: s, data })).catch(() => ({ slot: s, data: [] })))
     const outflowPromises = useSlots.map(s => fetchOutflowBySlot(s.Slot).then(data => ({ slot: s, data })).catch(() => ({ slot: s, data: [] })))
@@ -838,11 +766,52 @@ const initChartData = async () => {
     statsData.value[2].value = `${stations.value.length ? Math.max(1, Math.round(stations.value.length / 10)) : '—'}条` // 简单近似线路数
 
     // 站点排名（基于当前 slot 的进站）
-    const currInflow = inflowResults.length ? inflowResults[inflowResults.length - 1].data : []
-    const topStations = (currInflow || []).map(s => ({ name: s.stationName || s.stationID || '未知', flow: (s.Tot_IF || s.tot_if || 0) })).sort((a, b) => b.flow - a.flow).slice(0, 10)
-    if (topStations.length) {
-      barChartOption.value.yAxis.data = topStations.map(s => s.name).reverse()
-      barChartOption.value.series[0].data = topStations.map(s => s.flow).reverse()
+    // 修改：改为基于所有时间段的总进站流量进行排名
+    // 原代码：
+    // const currInflow = inflowResults.length ? inflowResults[inflowResults.length - 1].data : []
+    // 使用站点ID获取对应站点名称
+    // const topStations = (currInflow || []).map(s => {
+    //   // 尝试获取站点名称，如果不存在则使用ID
+    //   const station = stations.value.find(st => st.stationID === s.stationID || st.id === s.stationID)
+    //   const name = station ? (station.name || station.stationName || station.stationID) : (s.stationName || s.stationID || '未知')
+    //   return { 
+    //     name: name.trim(), 
+    //     flow: (s.Tot_IF || s.tot_if || 0),
+    //     stationID: s.stationID
+    //   }
+    // }).sort((a, b) => b.flow - a.flow).slice(0, 10)
+    
+    // 计算所有时间段的站点总流量
+    const totalInflowByStationForTopStations = new Map()
+    for (const result of inflowResults) {
+      for (const item of result.data) {
+        const stationID = item.stationID
+        const flow = (item.Tot_IF || item.tot_if || 0)
+        if (totalInflowByStationForTopStations.has(stationID)) {
+          totalInflowByStationForTopStations.set(stationID, totalInflowByStationForTopStations.get(stationID) + flow)
+        } else {
+          totalInflowByStationForTopStations.set(stationID, flow)
+        }
+      }
+    }
+    
+    // 转换为数组并排序，获取TOP 10
+    const allStationsTotal = Array.from(totalInflowByStationForTopStations.entries()).map(([stationID, flow]) => {
+      const station = stations.value.find(st => st.stationID === stationID || st.id === stationID)
+      const name = station ? (station.name || station.stationName || station.stationID) : `站点${stationID}`
+      return { 
+        name: name.trim(), 
+        flow: flow,
+        stationID: stationID
+      }
+    }).sort((a, b) => b.flow - a.flow).slice(0, 10)
+    
+    // 重新定义topStations变量，用于后续图表使用
+    const topStations = allStationsTotal
+    
+    if (allStationsTotal.length) {
+      barChartOption.value.yAxis.data = allStationsTotal.map(s => s.name).reverse()
+      barChartOption.value.series[0].data = allStationsTotal.map(s => s.flow).reverse()
     }
 
     // 线路流量分布 - 以站点聚合近似展示（取 Top 6 站点占比）
@@ -852,23 +821,43 @@ const initChartData = async () => {
     // 时段流量（工作日/周末）及分类统计（基于所有已拉取的 slots）
     const workdayFlow = []
     const weekendFlow = []
-    const categoryTimes = []
-    const commuterFlow = []
-    const homeFlow = []
-    const nonHomeFlow = []
+
+
+    // 进站流量分类统计和出站流量分类统计数据
+    const inflowCategoryTimes = []
+    const inflowCommuter = []
+    const inflowHome = []
+    const inflowNonHome = []
+    
+    const outflowCommuter = []
+    const outflowHome = []
+    const outflowNonHome = []
 
     for (let i = 0; i < useSlots.length; i++) {
       const s = useSlots[i]
       const inflows = inflowResults[i].data
-      const totalIn = inflows.reduce((sum, it) => sum + (it.Tot_IF || it.tot_if || 0), 0)
+      const outflows = outflowResults[i].data
       const cSum = inflows.reduce((sum, it) => sum + (it.C_IF || it.c_if || 0), 0)
       const hbSum = inflows.reduce((sum, it) => sum + (it.HB_IF || it.hb_if || 0), 0)
       const nhbSum = inflows.reduce((sum, it) => sum + (it.NHB_IF || it.nhb_if || 0), 0)
 
-      categoryTimes.push(slotLabel(s))
-      commuterFlow.push(cSum)
-      homeFlow.push(hbSum)
-      nonHomeFlow.push(nhbSum)
+      // 计算总进站流量用于工作日/周末判断
+      const totalIn = inflows.reduce((sum, it) => sum + (it.Tot_IF || it.tot_if || 0), 0)
+
+      // 进站分类数据
+      inflowCategoryTimes.push(slotLabel(s))
+      inflowCommuter.push(cSum)
+      inflowHome.push(hbSum)
+      inflowNonHome.push(nhbSum)
+
+      // 出站分类数据
+      const cSumOut = outflows.reduce((sum, it) => sum + (it.C_OF || it.c_of || 0), 0)
+      const hbSumOut = outflows.reduce((sum, it) => sum + (it.HB_OF || it.hb_of || 0), 0)
+      const nhbSumOut = outflows.reduce((sum, it) => sum + (it.NHB_OF || it.nhb_of || 0), 0)
+      
+      outflowCommuter.push(cSumOut)
+      outflowHome.push(hbSumOut)
+      outflowNonHome.push(nhbSumOut)
 
       // 简易区分 weekday/weekend（依赖于 DateInfo 在后端）
       // 若后端没有 weekday 标记，这里将数据都放到工作日系列（作为降级方案）
@@ -876,14 +865,19 @@ const initChartData = async () => {
       weekendFlow.push(0)
     }
 
-    areaChartOption.value.xAxis.data = categoryTimes
-    areaChartOption.value.series[0].data = workdayFlow
-    areaChartOption.value.series[1].data = weekendFlow
 
-    categoryChartOption.value.xAxis.data = categoryTimes
-    categoryChartOption.value.series[0].data = commuterFlow
-    categoryChartOption.value.series[1].data = homeFlow
-    categoryChartOption.value.series[2].data = nonHomeFlow
+
+    // 进站流量分类统计图表数据（仅三类）
+    inflowCategoryOption.value.xAxis.data = inflowCategoryTimes
+    inflowCategoryOption.value.series[0].data = inflowCommuter
+    inflowCategoryOption.value.series[1].data = inflowHome
+    inflowCategoryOption.value.series[2].data = inflowNonHome
+
+    // 出站流量分类统计图表数据（仅三类，使用相同的时间轴）
+    outflowCategoryOption.value.xAxis.data = inflowCategoryTimes
+    outflowCategoryOption.value.series[0].data = outflowCommuter
+    outflowCategoryOption.value.series[1].data = outflowHome
+    outflowCategoryOption.value.series[2].data = outflowNonHome
 
     // 天气（尝试拉取用于展示的日期天气，可能是当天或最近可用日期）
     let weatherData = await fetchWeather(usedDate).catch(() => [])
@@ -900,14 +894,21 @@ const initChartData = async () => {
     }
 
     if (weatherData && weatherData.length) {
-      const weatherTimes = weatherData.map(w => weatherLabel(w))
+      // 按时间排序，确保从0点开始的完整时间序列
+      const sortedWeatherData = [...weatherData].sort((a, b) => {
+        const timeA = Number(a.recordTime || 0)
+        const timeB = Number(b.recordTime || 0)
+        return timeA - timeB
+      })
+      
+      const weatherTimes = sortedWeatherData.map(w => weatherLabel(w))
       weatherChartOption.value.xAxis.data = weatherTimes
-      weatherChartOption.value.series[0].data = weatherData.map(w => Number(w.temperature_2m || 0))
-      weatherChartOption.value.series[1].data = weatherData.map(w => Number(w.rain || 0))
-      weatherChartOption.value.series[2].data = weatherData.map(w => Number(w.wind_speed_10m || 0))
+      weatherChartOption.value.series[0].data = sortedWeatherData.map(w => Number(w.temperature_2m || 0))
+      weatherChartOption.value.series[1].data = sortedWeatherData.map(w => Number(w.rain || 0))
+      weatherChartOption.value.series[2].data = sortedWeatherData.map(w => Number(w.wind_speed_10m || 0))
 
       // 使用最新时间的天气记录作为今日概要（若 recordTime 为秒数也可处理）
-      const latest = weatherData.reduce((a, b) => (Number(a.recordTime || 0) >= Number(b.recordTime || 0) ? a : b))
+      const latest = sortedWeatherData.reduce((a, b) => (Number(a.recordTime || 0) >= Number(b.recordTime || 0) ? a : b))
       todayWeather.value = {
         temp: Number(latest.temperature_2m || latest.temperature || null),
         rain: Number(latest.rain || 0),
@@ -915,10 +916,8 @@ const initChartData = async () => {
         timeLabel: weatherLabel(latest),
         sourceDate: weatherSourceDate || (latest.recordDate || null)
       }
-      hasWeather.value = true
     } else {
       todayWeather.value = null
-      hasWeather.value = false
     }
 
     // OD 流量 Top（使用最近 slot）
@@ -926,23 +925,90 @@ const initChartData = async () => {
       const lastSlotId = useSlots[useSlots.length - 1].Slot
       const topOD = await fetchTopOD(lastSlotId, 10).catch(() => [])
       if (topOD && topOD.length) {
-        odChartOption.value.series[0].data = topOD.map(item => ({ name: `${item.O_Station} → ${item.D_Station}`, value: item.Tot_F || item.tot_f || 0 }))
+        odChartOption.value.series[0].data = topOD.map(item => {
+          // 获取起始站点和终点站的名称
+          const originStation = stations.value.find(st => st.id === item.O_Station)
+          const destStation = stations.value.find(st => st.id === item.D_Station)
+
+          const originName = String(originStation?.name || item.O_Station || '未知').trim()
+          const destName = String(destStation?.name || item.D_Station || '未知').trim()
+          
+          return { 
+            name: `${originName} → ${destName}`, 
+            value: item.Tot_F || item.tot_f || 0 
+          }
+        })
       }
     }
 
     // Metro lines 表格 - 用 Top station 列表代替线路（降级显示）
-    metroLines.value = (topStations.length ? topStations : stations.value.slice(0, 10)).map((s, idx) => ({
-      line: s.name || `站点-${idx + 1}`,
-      name: `站点 ${s.name || s.stationID}`,
-      stations: 1,
-      flow: s.flow || 0,
-      status: s.flow && s.flow > 0 ? '正常' : '待检测',
-      tagType: idx % 4 === 0 ? 'primary' : idx % 4 === 1 ? 'success' : idx % 4 === 2 ? 'warning' : 'info'
-    }))
+    // 计算所有时间段的站点总流量
+    for (const result of inflowResults) {
+      for (const item of result.data) {
+        const stationID = item.stationID
+        const flow = (item.Tot_IF || item.tot_if || 0)
+        if (totalInflowByStationForTopStations.has(stationID)) {
+          totalInflowByStationForTopStations.set(stationID, totalInflowByStationForTopStations.get(stationID) + flow)
+        } else {
+          totalInflowByStationForTopStations.set(stationID, flow)
+        }
+      }
+    }
+    
+    const newMetroLines = stations.value.map((station, idx) => {
+      const stationFlow = totalInflowByStationForTopStations.get(station.id || station.stationID) || 0
+      return {
+        id: station.id || station.stationID,
+        name: station.name || `站点 ${station.id || station.stationID}`,
+        longitude: station.lon,  // 添加经度数据
+        latitude: station.lat,   // 添加纬度数据
+        stations: 1,
+        flow: stationFlow,  // 使用计算的流量而不是原始数据
+        status: stationFlow && stationFlow > 0 ? '正常' : '待检测',
+        tagType: idx % 4 === 0 ? 'primary' : idx % 4 === 1 ? 'success' : idx % 4 === 2 ? 'warning' : 'info'
+      }
+    })
+    
+    allStationsData.value = newMetroLines  // 存储所有站点数据
+    currentPage.value = 1  // 重置为第一页
 
   } catch (err) {
-    console.error('initChartData: API 获取失败，使用回退数据', err)
-    fallbackInitData()
+    console.error('initChartData: API 获取失败', err)
+    ElMessage.error('数据加载失败，请检查网络连接或稍后重试')
+    
+    // 清空所有图表数据
+    lineChartOption.value.xAxis.data = []
+    lineChartOption.value.series[0].data = []
+    lineChartOption.value.series[1].data = []
+    
+    barChartOption.value.yAxis.data = []
+    barChartOption.value.series[0].data = []
+    
+    pieChartOption.value.series[0].data = []
+    
+
+    
+    weatherChartOption.value.xAxis.data = []
+    weatherChartOption.value.series[0].data = []
+    weatherChartOption.value.series[1].data = []
+    weatherChartOption.value.series[2].data = []
+    
+    odChartOption.value.series[0].data = []
+    
+    inflowCategoryOption.value.series[0].data = []
+    inflowCategoryOption.value.series[1].data = []
+    inflowCategoryOption.value.series[2].data = []
+    
+    outflowCategoryOption.value.series[0].data = []
+    outflowCategoryOption.value.series[1].data = []
+    outflowCategoryOption.value.series[2].data = []
+    
+    statsData.value.forEach(stat => {
+      stat.value = '—'
+    })
+    
+    metroLines.value = []
+    todayWeather.value = null
   }
 }
 
@@ -1030,86 +1096,24 @@ const fallbackInitData = () => {
     inflowNHB.push(Math.floor(tot * 0.25)) // 25%非居家
   })
   inflowCategoryOption.value.xAxis.data = topStationsList
-  inflowCategoryOption.value.series[0].data = inflowTot
-  inflowCategoryOption.value.series[1].data = inflowC
-  inflowCategoryOption.value.series[2].data = inflowHB
-  inflowCategoryOption.value.series[3].data = inflowNHB
+  inflowCategoryOption.value.series[0].data = inflowC
+  inflowCategoryOption.value.series[1].data = inflowHB
+  inflowCategoryOption.value.series[2].data = inflowNHB
 
   // 出站流量分类统计（TOP 10站点）
-  const outflowTot = [] // 总出站流量
   const outflowC = [] // 通勤出站
   const outflowHB = [] // 居家出站
   const outflowNHB = [] // 非居家出站
   topStationsList.forEach(() => {
     const tot = Math.floor(Math.random() * 50 + 60) // 60-110
-    outflowTot.push(tot)
     outflowC.push(Math.floor(tot * 0.45)) // 45%通勤
     outflowHB.push(Math.floor(tot * 0.30)) // 30%居家
     outflowNHB.push(Math.floor(tot * 0.25)) // 25%非居家
   })
   outflowCategoryOption.value.xAxis.data = topStationsList
-  outflowCategoryOption.value.series[0].data = outflowTot
-  outflowCategoryOption.value.series[1].data = outflowC
-  outflowCategoryOption.value.series[2].data = outflowHB
-  outflowCategoryOption.value.series[3].data = outflowNHB
-}
-
-// 更新实时数据
-const updateRealtimeData = async () => {
-  try {
-    const now = new Date()
-    const today = now.toISOString().slice(0, 10)
-
-    // 获取时段并找出当前 slot；若设置了 TEST_METRO_DATE 则优先使用该日期，否则使用今日并回退到最近可用日期
-    let segments = []
-    if (TEST_METRO_DATE) {
-      segments = await fetchTimeSegmentsByDate(TEST_METRO_DATE).catch(() => [])
-    } else {
-      segments = await fetchTimeSegmentsByDate(now.toISOString().slice(0,10)).catch(() => [])
-      if (!segments || !segments.length) {
-        try {
-          const allSegments = await fetchTimeSegmentsByDate(null, 1000).catch(() => [])
-          if (allSegments && allSegments.length) {
-            const dates = Array.from(new Set(allSegments.map(s => s.recordDate).filter(Boolean))).sort()
-            const latestDate = dates.length ? dates[dates.length - 1] : null
-            if (latestDate) segments = allSegments.filter(s => s.recordDate === latestDate)
-          }
-        } catch (e) {
-          // ignore
-        }
-      }
-    }
-
-    const current = segments.find(s => {
-      const sh = slotHour(s)
-      const eh = slotHour({ StartTime: s.EndTime })
-      if (eh == null && sh != null) eh = sh + 1
-      const ch = now.getHours()
-      return sh != null && ch >= sh && eh != null && ch < eh
-    })
-
-    if (current && current.Slot) {
-      currentSlot.value = current.Slot
-      const inflows = await fetchInflowBySlot(current.Slot).catch(() => [])
-      const totals = inflows.reduce((sum, it) => sum + (it.Tot_IF || it.tot_if || 0), 0)
-      const active = inflows.filter(it => (it.Tot_IF || it.tot_if || 0) > 0).length
-
-      // 更新 chart 最新点（替换最后一个点以反映最新）
-      if (lineChartOption.value.xAxis.data && lineChartOption.value.series[0].data) {
-        const lastIndex = lineChartOption.value.series[0].data.length - 1
-        lineChartOption.value.series[0].data[lastIndex] = totals
-        // 出站也尝试更新
-        const outflows = await fetchOutflowBySlot(current.Slot).catch(() => [])
-        const totalsOut = outflows.reduce((sum, it) => sum + (it.Tot_OF || it.tot_of || 0), 0)
-        lineChartOption.value.series[1].data[lastIndex] = totalsOut
-      }
-
-      statsData.value[0].value = totals >= 10000 ? `${(totals / 10000).toFixed(1)}万` : `${totals}`
-      statsData.value[1].value = `${active}个`
-    }
-  } catch (err) {
-    console.error('updateRealtimeData failed, fallback to random', err)
-  }
+  outflowCategoryOption.value.series[0].data = outflowC
+  outflowCategoryOption.value.series[1].data = outflowHB
+  outflowCategoryOption.value.series[2].data = outflowNHB
 }
 
 const goToRoutePlanner = () => {
@@ -1133,13 +1137,16 @@ const refreshData = async () => {
     ElMessage.success('数据已刷新')
   } catch (err) {
     console.error('刷新失败:', err)
-    ElMessage.error('刷新失败，使用本地回退数据')
-    fallbackInitData()
+    ElMessage.error('数据刷新失败，请检查网络连接或稍后重试')
   }
 }
 
 const viewDetails = (row) => {
-  ElMessage.info(`查看 ${row.line} 的详细信息`)
+  ElMessage.info(`查看 ${row.name} 的详细信息`)
+}
+
+const handlePageChange = (page) => {
+  currentPage.value = page
 }
 
 onMounted(() => {
@@ -1157,18 +1164,14 @@ onMounted(() => {
     }
 
     // 初始化并开始周期性更新
-    initChartData().catch(err => console.error('初始化数据失败，使用回退数据', err))
-    // 每30秒更新一次实时数据
-    updateTimer = setInterval(() => updateRealtimeData().catch(() => {}), 30000)
+    initChartData()
   } catch (error) {
     console.error('Dashboard 初始化失败:', error)
+    ElMessage.error('页面初始化失败，请检查网络连接或稍后重试')
   }
 })
 
 onUnmounted(() => {
-  if (updateTimer) {
-    clearInterval(updateTimer)
-  }
 })
 </script>
 
@@ -1317,18 +1320,36 @@ onUnmounted(() => {
   color: #0f172a;
 }
 
-
+.today-weather-summary {
+  padding: 12px 8px 4px 8px;
+  border-bottom: 1px dashed #eef0f6;
+  margin-bottom: 8px;
+}
+.weather-summary-row {
+  align-items: center;
+}
+.weather-item {
+  text-align: center;
+}
+.weather-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.weather-label {
+  font-size: 12px;
+  color: #6b7280;
+}
+.weather-time {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #8b8f98;
+}
 .weather-empty {
   padding: 24px;
   text-align: center;
   color: #9aa0a6;
   font-size: 14px;
-}
-
-.today-weather-summary {
-  min-height: 56px;
-  display: flex;
-  align-items: center;
 }
 
 .chart-card .el-card__body {
@@ -1345,6 +1366,23 @@ onUnmounted(() => {
   border-radius: 16px;
   border: 1px solid #eef0f6;
   box-shadow: 0 20px 45px rgba(31, 41, 55, 0.08);
+}
+
+.equal-height-col {
+  display: flex;
+}
+
+.equal-height-col .chart-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 400px; /* 设置最小高度确保统一 */
+}
+
+.equal-height-col .el-card__body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 @media (max-width: 768px) {
@@ -1368,4 +1406,3 @@ onUnmounted(() => {
   }
 }
 </style>
-

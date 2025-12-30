@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .routers import commute, metro, favorite, feedback, auth
 from .routers import metro_metro
+from .routers import time
 
 # 创建 FastAPI 应用
 app = FastAPI(
@@ -26,6 +27,7 @@ app.add_middleware(
 app.include_router(commute.router, prefix="/api/commute", tags=["出行"])
 app.include_router(metro.router, prefix="/api/metro", tags=["地铁"])
 app.include_router(metro_metro.router, prefix="/api/metro", tags=["上海地铁（shanghai_metro）"])
+app.include_router(time.router, prefix="/api/time", tags=["时间"])
 app.include_router(favorite.router, prefix="/api/favorites", tags=["收藏"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["反馈"])
 app.include_router(auth.router, prefix="/api/auth", tags=["用户认证"])

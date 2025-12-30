@@ -99,12 +99,27 @@ def weather(recordDate: Optional[str] = Query(None), limit: int = 100):
 
 
 @router.get('/top-od')
-def top_od(limit: int = 20):
-    """返回 odflow 表的前几行（按某个字段排序如果可用）"""
+def top_od(recordDate: str = "2017-06-10", limit: int = 10):
+    """返回指定日期的热门OD流量（按总流量排序）"""
     with engine_metro.connect() as conn:
-        try:
-            rows = conn.execute(text('SELECT * FROM `odflow` ORDER BY `total` DESC LIMIT :limit'), {'limit': limit}).fetchall()
-        except Exception:
-            rows = conn.execute(text('SELECT * FROM `odflow` LIMIT :limit'), {'limit': limit}).fetchall()
+        # 使用提供的SQL逻辑查询
+        query = """
+        SELECT
+            o.O_Station,
+            o.D_Station,
+            SUM(o.Tot_F) AS Tot_F
+        FROM ODFlow o
+        JOIN (
+            -- 先查询 2017-06-10 当天所有 Slot，提高性能
+            SELECT Slot
+            FROM TimeSegment
+            WHERE recordDate = :recordDate
+        ) t ON o.Slot = t.Slot
+        GROUP BY o.O_Station, o.D_Station
+        ORDER BY Tot_F DESC
+        LIMIT :limit
+        """
+        params = {"recordDate": recordDate, "limit": limit}
+        rows = conn.execute(text(query), params).fetchall()
         data = [dict(r._mapping) for r in rows]
     return {'code': 0, 'message': '', 'data': data}
